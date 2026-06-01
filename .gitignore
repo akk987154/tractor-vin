@@ -1,0 +1,12 @@
+# Environment
+.env
+.env.*
+
+# Go
+tractor-vin
+*.exe
+
+# IDE
+.vscode/
+.idea/
+.DS_Store
