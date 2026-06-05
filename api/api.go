@@ -56,6 +56,7 @@ func Serve(port int) {
 
 		result, err := decoder.Decode(req.Serial)
 		if err != nil {
+			w.WriteHeader(400)
 			json.NewEncoder(w).Encode(DecodeResponse{Success: false, Error: err.Error()})
 			return
 		}

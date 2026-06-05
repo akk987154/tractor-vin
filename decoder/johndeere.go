@@ -111,6 +111,9 @@ func decodeJohnDeere(serial string) (*DecodedInfo, error) {
 	}
 
 	// Try to determine model from serial prefix
+	if len(serial) < 6 {
+		return info, nil
+	}
 	modelSerial := serial[2:6]
 	if len(modelSerial) == 4 {
 		if m, ok := jdModelFromSerial[modelSerial]; ok {

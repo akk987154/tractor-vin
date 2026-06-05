@@ -19,16 +19,28 @@ type DecodedInfo struct {
 
 type DecoderFunc func(serial string) (*DecodedInfo, error)
 
-var decoders = map[string]DecoderFunc{
-	"John Deere":       decodeJohnDeere,
-	"Kubota":           decodeKubota,
-	"Massey Ferguson":  decodeMasseyFerguson,
-	"Case IH":          decodeCaseIH,
-	"New Holland":      decodeNewHolland,
+type decoderEntry struct {
+	brand string
+	fn    DecoderFunc
+}
+
+// decoders is an ordered slice (not a map) to guarantee deterministic brand
+// selection. Case IH has an extremely permissive pattern, so it must always
+// be tried last to avoid swallowing serials that belong to other brands.
+var decoders = []decoderEntry{
+	{"John Deere", decodeJohnDeere},
+	{"Kubota", decodeKubota},
+	{"Massey Ferguson", decodeMasseyFerguson},
+	{"New Holland", decodeNewHolland},
+	{"Case IH", decodeCaseIH},
 }
 
 func Brands() []string {
-	return []string{"John Deere", "Kubota", "Massey Ferguson", "Case IH", "New Holland"}
+	brands := make([]string, len(decoders))
+	for i, d := range decoders {
+		brands[i] = d.brand
+	}
+	return brands
 }
 
 func Decode(serial string) (*DecodedInfo, error) {
@@ -37,9 +49,9 @@ func Decode(serial string) (*DecodedInfo, error) {
 		return nil, fmt.Errorf("序列号不能为空")
 	}
 
-	for brand, fn := range decoders {
-		if result, err := fn(serial); err == nil {
-			result.Brand = brand
+	for _, d := range decoders {
+		if result, err := d.fn(serial); err == nil {
+			result.Brand = d.brand
 			return result, nil
 		}
 	}
