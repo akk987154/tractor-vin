@@ -8,19 +8,35 @@ import (
 
 var kubotaPattern = regexp.MustCompile(`^[A-Z]{0,2}\d{4,6}[A-Z]{0,3}\d{0,5}$`)
 
-var kubotaModelPrefix = map[string]string{
-	"L":    "L Series (紧凑型)",
-	"L35":  "L3560",
-	"L39":  "L3901",
-	"L47":  "L4701",
-	"L60":  "L6060",
-	"M":    "M Series (多用途)",
-	"M5":   "M5 Series",
-	"M6":   "M6 Series",
-	"M7":   "M7 Series",
-	"MX":   "MX Series",
-	"B":    "B Series (超紧凑型)",
-	"BX":   "BX Series (庭院型)",
+// kubotaPrefixEntry 描述一个型号前缀及其对应的系列/型号标识。
+type kubotaPrefixEntry struct {
+	prefix string
+	series string
+	model  string
+}
+
+// kubotaPrefixes 按 prefix 长度从长到短排列，必须保持这个顺序。
+//
+// 注意：这些前缀之间存在包含关系 —— "L" 是 "L35"/"L39"/"L47"/"L60" 的前缀，
+// "M" 是 "M5"/"M6"/"M7"/"MX" 的前缀，"B" 是 "BX" 的前缀。
+// 原实现是 `for prefix, model := range kubotaModelPrefix`，map 迭代顺序随机，
+// 于是同一个序列号可能这次解出 "L Series (紧凑型)"、下次解出 "L3560"。
+// 这正是 CHANGELOG 里声称已在 decoder.go 修好的那类非确定性 bug，
+// 当时只改了品牌派发，漏掉了品牌文件内部的这一处。
+// 改用有序切片 + 最长前缀优先，结果稳定且优先命中更具体的型号。
+var kubotaPrefixes = []kubotaPrefixEntry{
+	{"L35", "L3560", "L35"},
+	{"L39", "L3901", "L39"},
+	{"L47", "L4701", "L47"},
+	{"L60", "L6060", "L60"},
+	{"M5", "M5 Series", "M5"},
+	{"M6", "M6 Series", "M6"},
+	{"M7", "M7 Series", "M7"},
+	{"MX", "MX Series", "MX"},
+	{"BX", "BX Series (庭院型)", "BX"},
+	{"L", "L Series (紧凑型)", "L"},
+	{"M", "M Series (多用途)", "M"},
+	{"B", "B Series (超紧凑型)", "B"},
 }
 
 var kubotaYearPrefix = map[string]string{
@@ -47,13 +63,12 @@ func decodeKubota(serial string) (*DecodedInfo, error) {
 		Metadata: make(map[string]string),
 	}
 
-	// Try to extract model from prefix
+	// Try to extract model from prefix（最长前缀优先，见 kubotaPrefixes 的说明）
 	serial = strings.TrimSpace(serial)
-	for prefix, model := range kubotaModelPrefix {
-		if strings.HasPrefix(serial, prefix) {
-			info.Series = model
-			info.Model = strings.TrimSuffix(prefix, " Series (紧凑型)")
-			info.Model = strings.TrimSuffix(info.Model, " Series (多用途)")
+	for _, entry := range kubotaPrefixes {
+		if strings.HasPrefix(serial, entry.prefix) {
+			info.Series = entry.series
+			info.Model = entry.model
 			break
 		}
 	}

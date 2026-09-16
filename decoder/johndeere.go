@@ -58,19 +58,13 @@ var jdModelFromSerial = map[string]string{
 }
 
 func decodeJohnDeere(serial string) (*DecodedInfo, error) {
-	matched := false
-	for _, pat := range jdPatterns {
-		if pat.MatchString(serial) {
-			matched = true
-			break
-		}
-	}
-	if !matched {
-		if len(serial) >= 5 && strings.HasPrefix(serial, "1") {
-			// continue with partial match
-		} else {
-			return nil, fmt.Errorf("不是有效的 John Deere PIN 码")
-		}
+	// 这里必须严格按 jdPatterns 判定。
+	// 曾经存在一个"部分匹配"兜底分支：只要 len(serial) >= 5 且以 "1" 开头就放行，
+	// 而 John Deere 排在 decoders 列表的第一位，于是任何以 "1" 开头的输入
+	// （包括 "1ZZZZ" 这种无意义字符串）都会被判定为 John Deere 并直接返回，
+	// 后面的 Kubota / Massey Ferguson / New Holland / Case IH 永远没有机会执行。
+	if !matchesAny(jdPatterns, serial) {
+		return nil, fmt.Errorf("不是有效的 John Deere PIN 码")
 	}
 
 	info := &DecodedInfo{

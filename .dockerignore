@@ -1,0 +1,24 @@
+# 构建上下文排除项。
+# 没有这个文件时 `docker build .` 会把整个目录（含 .git）发给 daemon。
+
+.git
+.gitignore
+.vscode
+.idea
+.DS_Store
+
+# 凭据类文件绝不应进入构建上下文
+.env
+.env.*
+
+# 构建产物
+tractor-vin
+*.exe
+
+# 文档与本地工具产物
+*.md
+.tools/
+
+# 测试与覆盖率产物
+*.out
+coverage.*

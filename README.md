@@ -85,25 +85,55 @@ curl -X POST http://localhost:8080/decode \
   -H "Content-Type: application/json" \
   -d '{"serial":"1RW8136PABCD12345"}'
 
-# 响应示例
-# {
-#   "serial": "1RW8136PABCD12345",
-#   "brand": "John Deere",
-#   "model": "5075E",
-#   "series": "5E Series",
-#   "year": 2018,
-#   "factory": "Pune, India",
-#   "engineFamily": "PowerTech 3029",
-#   "productionNumber": "BCD12345",
-#   "country": "India"
-# }
+# 响应示例（实际输出）
+# {"success":true,"data":{
+#   "brand":"John Deere",
+#   "model":"W813系列",
+#   "series":"",
+#   "year":"2011",
+#   "factory":"美国爱荷华州安克尼",
+#   "engineFamily":"PowerTech E 1.6-2.9L",
+#   "productionNumber":"CD12345",
+#   "country":"美国",
+#   "metadata":{"WMI":"1RW"}
+# }}
+
+# 失败时返回 HTTP 400 与错误说明
+curl -X POST http://localhost:8080/decode \
+  -H "Content-Type: application/json" \
+  -d '{"serial":"1ZZZZ"}'
+# {"success":false,"error":"无法识别该序列号格式。支持的品牌: ..."}
 
 # 品牌列表
 curl http://localhost:8080/brands
+# {"brands":["John Deere","Kubota","Massey Ferguson","New Holland","Case IH"]}
 
 # 健康检查
 curl http://localhost:8080/health
 ```
+
+### 响应格式说明
+
+所有响应都是 `{"success": bool, ...}` 信封结构：
+
+- 成功：`{"success": true, "data": {...}}`
+- 失败：`{"success": false, "error": "..."}`，同时返回 HTTP 400
+
+注意 `year` 是字符串（例如 `"2011"`）而不是数字，`factory` / `country` 是中文描述。
+
+### 服务参数
+
+```bash
+./tractor-vin serve                      # 默认监听 0.0.0.0:8080
+./tractor-vin serve -host 127.0.0.1      # 只允许本机访问
+./tractor-vin serve -port 9000
+```
+
+默认绑定 `0.0.0.0` 是为了配合容器部署。如果直接在本机运行且不希望同网段可访问，
+请显式指定 `-host 127.0.0.1`。
+
+服务端已配置 `ReadHeaderTimeout` / `ReadTimeout` / `WriteTimeout` / `IdleTimeout`，
+并对请求体（4 KiB）与序列号长度（32 字符）设置了上限。
 
 ### 各品牌解码规则
 
@@ -116,6 +146,31 @@ curl http://localhost:8080/health
 | **Massey Ferguson** | 9-17位 | 型号前缀 + 工厂码 + 序列段 | 系列、工厂、年份 |
 | **Case IH** | 8-17位 | 型号前缀 + 数字型号映射 | 型号、发动机、产地 |
 | **New Holland** | 9-17位 | T-series 前缀 + Boomer/Workmaster 分支 | 系列、工厂、年份 |
+
+### 已知限制
+
+这些是当前实现的真实短板，写在这里以免把输出当作权威结论使用：
+
+1. **品牌判定依赖尝试顺序，而不是真正的 WMI 识别。**
+   各品牌的正则存在大面积重叠 —— `^[A-Z0-9]{17}$` 同时属于 John Deere、
+   Massey Ferguson 和 New Holland，而它又是 Case IH `^[A-Z0-9]{8,17}$` 的子集。
+   实际结果完全取决于 `decoder.go` 中 `decoders` 切片的顺序，
+   因此一个 17 位字母数字串总会被判为 John Deere。
+
+2. **不校验 VIN 校验位。** 标准 VIN 的第 9 位是 mod-11 校验位，本实现未做校验，
+   所以一个号码打错一位仍会返回一个看起来很确定的错误结果。
+
+3. **年份码表只覆盖 2010–2026，且年份字母实际以 30 年为周期循环。**
+   同一个字母在 1980 / 2010 / 2040 年是同一个值。表外的年份会返回空字符串，
+   而落在表内的老机器会被报成一个并不正确的近年份。
+
+4. **型号提取是启发式的。** 例如 `1RW8136PABCD12345` 会得到 `W813系列`，
+   这只是把序列号的第 3–6 位当作型号段，并不代表真实型号。
+
+5. **Kubota 的"年份"是区间**（如 `1990-1995`），而不是确切年份。
+
+以上任何一条要真正解决都需要引入各厂商的 WMI 前缀表和校验位算法，
+属于路线图里尚未完成的工作。
 
 ### 解码器架构
 
@@ -190,12 +245,43 @@ Go 1.22 · chi router · net/http
 <details>
 <summary>点击展开</summary>
 
-### v0.4 — 解码器策略模式重构 + CORS (当前)
+### v0.5 — 正确性与服务端加固 (当前)
+- **删除 John Deere 的"部分匹配"兜底分支**。该分支只要输入满足
+  `len >= 5 && HasPrefix(serial, "1")` 就放行，而 John Deere 排在品牌派发
+  列表首位，导致 `1ZZZZ` 这类无意义输入被返回为 John Deere（全字段为空），
+  且 Kubota / Massey Ferguson / New Holland / Case IH 几乎永远不可达
+- **修复 Kubota 型号解析的非确定性**。原实现 `for prefix := range kubotaModelPrefix`
+  遍历 map，而键之间互为前缀（"L" 是 "L35" 的前缀，"M" 是 "M5"/"MX" 的前缀，
+  "B" 是 "BX" 的前缀），map 迭代顺序随机，同一序列号可能得到不同型号。
+  这正是 v0.4 声称已在 decoder.go 修好的那类 bug，当时漏掉了品牌文件内部
+- HTTP 服务加超时（ReadHeaderTimeout/ReadTimeout/WriteTimeout/IdleTimeout）。
+  原实现用 `http.ListenAndServe`，四个超时全为 0，存在 Slowloris 风险
+- 请求体限制 4 KiB（`http.MaxBytesReader`，超出返回 413），
+  序列号长度限制 32 字符（API 层与解码器层各校验一次）
+- 响应统一设置 `Content-Type: application/json` 与 `X-Content-Type-Options: nosniff`，
+  原先由 Go 嗅探成 text/plain
+- 新增 `-host` 参数（默认 0.0.0.0 以配合容器），
+  并修正启动日志——原先无论绑定到哪都打印 "localhost"
+- `api.Serve` 返回 error 而不是在库代码里 `log.Fatal`/`os.Exit`
+- 抽出 `newRouter()` 使路由可被 httptest 直接测试
+- 移除 CORS 中误导性的 `Authorization` 允许头（本服务没有鉴权）
+- **补交 go.sum**（此前从未提交），Dockerfile 随之 `COPY go.mod go.sum`
+- chi v5.1.0 → v5.3.2（修复 Host Header 注入导致的重定向问题与 RealIP 的
+  X-Forwarded-For 伪造问题）；go.mod 的 go 指令随之升到 1.23
+- Dockerfile：基础镜像升到 golang:1.27-alpine / alpine:3.23（原 1.22 已不满足
+  chi 的版本要求），新增非 root USER、HEALTHCHECK、.dockerignore、
+  `go mod verify` 与 `-trimpath -ldflags="-s -w"`
+- 新增 20 个单元测试（decoder 10 个 + api 10 个），覆盖上述全部回归点，
+  含"任何输入都不得 panic"与"结果必须稳定"两类不变式
+
+### v0.4 — 解码器策略模式重构 + CORS
 - 所有品牌解码器统一 `Decoder` 接口
 - 新增 Case IH 和 New Holland 解码器
 - chi 中间件栈（日志 + 恢复 + RealIP + CORS）
 - `DecodedInfo` 字段名跟 TractorCompare 对齐
 - Docker 多阶段构建
+- 注：本次改动同时把品牌派发从 map 改为有序切片。但 v0.5 发现品牌文件
+  内部仍有多处 map 迭代，且 John Deere 的兜底分支使派发顺序形同虚设
 
 ### v0.3 — API 服务 + Kubota 解码
 - 新增 HTTP API（chi 路由）

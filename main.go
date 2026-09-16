@@ -13,7 +13,10 @@ func main() {
 	decodeCmd := flag.NewFlagSet("decode", flag.ExitOnError)
 	serveCmd := flag.NewFlagSet("serve", flag.ExitOnError)
 	brandsCmd := flag.NewFlagSet("brands", flag.ExitOnError)
-	port := serveCmd.Int("port", 8080, "API server port")
+	// 默认监听所有网卡，与容器部署（Dockerfile EXPOSE 8080）保持一致。
+	// 只想本机访问时用 -host 127.0.0.1。
+	host := serveCmd.String("host", "0.0.0.0", "API 监听地址")
+	port := serveCmd.Int("port", 8080, "API 监听端口")
 
 	if len(os.Args) < 2 {
 		fmt.Println("TractorVIN — 拖拉机序列号解码器")
@@ -42,9 +45,11 @@ func main() {
 
 	case "serve":
 		serveCmd.Parse(os.Args[2:])
-		fmt.Printf("🚜 TractorVIN API 启动在 http://localhost:%d\n", *port)
 		fmt.Println("接口: POST /decode | GET /brands | GET /health")
-		api.Serve(*port)
+		if err := api.Serve(*host, *port); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ API 服务退出: %v\n", err)
+			os.Exit(1)
+		}
 
 	case "brands":
 		brandsCmd.Parse(os.Args[2:])
