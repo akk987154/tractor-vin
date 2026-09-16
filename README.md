@@ -308,3 +308,14 @@ Go 1.22 · chi router · net/http
 - [ ] VIN 校验位验证（check digit validation）
 - [ ] 批量解码端点（POST /decode/batch）
 - [ ] gRPC 端点（供内部微服务调用）
+
+---
+
+## License / 许可证
+
+MIT License — see [LICENSE](./LICENSE).
+
+Copyright (c) 2026 akk987154
+
+本项目采用 MIT 许可证，详见 [LICENSE](./LICENSE)。
+你可以自由使用、修改、分发，包括商业用途，只需保留版权声明与许可声明。
